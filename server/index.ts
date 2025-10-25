@@ -4,6 +4,21 @@ import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
 
+// Security headers middleware
+app.use((req, res, next) => {
+  // Prevent clickjacking
+  res.setHeader('X-Frame-Options', 'DENY');
+  // Prevent MIME type sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Enable XSS protection
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Referrer policy
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Remove server header to not expose technology
+  res.removeHeader('X-Powered-By');
+  next();
+});
+
 declare module 'http' {
   interface IncomingMessage {
     rawBody: unknown
@@ -12,9 +27,10 @@ declare module 'http' {
 app.use(express.json({
   verify: (req, _res, buf) => {
     req.rawBody = buf;
-  }
+  },
+  limit: '1mb' // Limit request body size to prevent DoS
 }));
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -53,8 +69,15 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
+    // Log error details but don't expose them to client
+    console.error('Error:', err);
+    
+    // Return generic error message in production
+    if (process.env.NODE_ENV === 'production') {
+      res.status(status).json({ message: status === 500 ? 'Internal Server Error' : message });
+    } else {
+      res.status(status).json({ message });
+    }
   });
 
   // importantly only setup vite in development and after
