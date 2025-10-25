@@ -4,6 +4,21 @@ import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
 
+// TODO: Add rate limiting for production deployment
+// Recommended implementation:
+// import rateLimit from 'express-rate-limit';
+// const authLimiter = rateLimit({
+//   windowMs: 15 * 60 * 1000, // 15 minutes
+//   max: 5, // limit each IP to 5 requests per windowMs for auth
+//   message: 'Too many requests, please try again later.'
+// });
+// const apiLimiter = rateLimit({
+//   windowMs: 15 * 60 * 1000,
+//   max: 100 // limit each IP to 100 requests per windowMs for general API
+// });
+// app.use('/api/auth', authLimiter);
+// app.use('/api', apiLimiter);
+
 // Security headers middleware
 app.use((req, res, next) => {
   // Prevent clickjacking

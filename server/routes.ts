@@ -101,8 +101,27 @@ function authenticateToken(req: any, res: any, next: any) {
 
 // Input validation helpers
 function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email) && email.length <= 255;
+  // More restrictive regex to prevent ReDoS attacks
+  // Basic validation: check for @ and . with simple character classes
+  if (email.length > 255 || email.length < 3) {
+    return false;
+  }
+  
+  // Simple check: must have exactly one @ and at least one . after it
+  const atIndex = email.indexOf('@');
+  if (atIndex === -1 || atIndex === 0 || atIndex !== email.lastIndexOf('@')) {
+    return false;
+  }
+  
+  const domain = email.substring(atIndex + 1);
+  const dotIndex = domain.indexOf('.');
+  if (dotIndex === -1 || dotIndex === 0 || dotIndex === domain.length - 1) {
+    return false;
+  }
+  
+  // Basic character validation - no complex regex needed
+  const validCharsRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  return validCharsRegex.test(email);
 }
 
 function isStrongPassword(password: string): { valid: boolean; error?: string } {
