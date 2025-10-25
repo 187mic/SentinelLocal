@@ -4,18 +4,53 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Login() {
   const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLogin, setIsLogin] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Login submitted:', { email, password });
-    // Mock login - go to dashboard
-    setLocation("/");
+    setIsLoading(true);
+
+    try {
+      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Authentication failed');
+      }
+
+      // Save JWT token to localStorage
+      localStorage.setItem('auth_token', data.token);
+      
+      // Navigate to dashboard
+      setLocation("/");
+      
+      toast({
+        title: "Success",
+        description: isLogin ? "Logged in successfully" : "Account created successfully"
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Authentication failed",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -58,8 +93,13 @@ export default function Login() {
               />
             </div>
 
-            <Button type="submit" className="w-full" data-testid="button-submit">
-              {isLogin ? "Sign In" : "Create Account"}
+            <Button 
+              type="submit" 
+              className="w-full" 
+              disabled={isLoading}
+              data-testid="button-submit"
+            >
+              {isLoading ? 'Please wait...' : (isLogin ? "Sign In" : "Create Account")}
             </Button>
           </form>
 

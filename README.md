@@ -27,11 +27,11 @@ Sentinel Local is a production-grade AI marketing manager designed for local bus
 ### Backend
 - **Node.js** with Express
 - **PostgreSQL** database
-- **Drizzle ORM** for type-safe database queries
+- **Prisma ORM** for type-safe database queries
 - **JWT** for secure authentication
 - **bcrypt** for password hashing
 
-### AI Integration (Planned)
+### AI Integration
 - **OpenRouter API** for flexible AI model access
 - Dual-tier strategy: low-cost models for routine tasks, premium models for critical decisions
 - Graceful fallbacks for rate limits and failures
@@ -42,16 +42,16 @@ Sentinel Local is a production-grade AI marketing manager designed for local bus
 ✅ User authentication with email/password  
 ✅ Dashboard with key metrics (spend, leads, revenue, reputation health)  
 ✅ Reviews management with AI-suggested replies  
-✅ Active campaign status monitoring  
-✅ On-demand AI optimization suggestions  
-✅ Optimization action audit log  
+✅ Active campaign status monitoring with GBP and Ads status  
+✅ **On-demand AI optimization via "Optimize Google Profile" and "Optimize Ads Budget" buttons**  
+✅ Optimization action audit log showing recent AI actions  
 ✅ Chat interface for AI assistant  
 ✅ Responsive, professional UI  
+✅ **Marketing API endpoints (GET /api/marketing/overview, POST /api/marketing/optimize)**
 
 ### Planned Integrations
 🔄 Google Business Profile API for live review ingestion  
 🔄 Google Ads API for campaign creation and management  
-🔄 OpenRouter API for production AI generation  
 🔄 Automated optimization scheduling  
 🔄 Email/SMS notifications  
 
@@ -81,7 +81,7 @@ Sentinel Local is a production-grade AI marketing manager designed for local bus
    # Authentication
    JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
    
-   # OpenRouter API (Optional - stubbed in MVP)
+   # OpenRouter API (Optional - stubbed fallbacks in MVP)
    OPENROUTER_API_KEY=your-openrouter-api-key
    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
    LOWCOST_MODEL_PRIMARY=deepseek/deepseek-r1:free
@@ -93,12 +93,13 @@ Sentinel Local is a production-grade AI marketing manager designed for local bus
 
 4. **Run database migrations**
    ```bash
-   npm run db:push
+   npx prisma generate
+   npx prisma db push
    ```
 
-5. **Seed the database** (optional - creates demo data)
+5. **Seed the database** (creates demo user and sample data)
    ```bash
-   npm run seed
+   node scripts/seed.js
    ```
 
 ## Running the Application
@@ -132,9 +133,9 @@ If you ran the seed script, you can log in with:
 
 This demo account includes:
 - Sample reviews (5-star, 4-star, and escalated 2-star)
-- Active Google Business Profile setup
-- Live Google Ads campaign plan
-- Optimization action history
+- **Live Google Business Profile setup** with 24/7 HVAC business details
+- **Active Google Ads campaign plan** with emergency keywords and $50/day budget
+- **Optimization action history** showing AI-driven changes
 - Chat message history
 
 ## Project Structure
@@ -162,12 +163,12 @@ sentinel-local/
 │   │   └── App.tsx           # Main app component
 │   └── index.html
 ├── server/                    # Backend Express application
-│   ├── routes.ts             # API route definitions
-│   ├── storage.ts            # Data persistence layer
+│   ├── routes.ts             # API route definitions (auth, reviews, ads, chat, marketing)
 │   └── index.ts              # Server entry point
-├── shared/                    # Shared TypeScript types
-│   └── schema.ts             # Database schema definitions
-├── db/                        # Database files (if using SQLite)
+├── prisma/                    # Database schema and migrations
+│   └── schema.prisma         # Prisma schema with all models
+├── scripts/                   # Utility scripts
+│   └── seed.js               # Database seed script
 ├── .env                       # Environment variables (create this)
 ├── package.json
 └── README.md
@@ -201,9 +202,9 @@ This ensures cost efficiency while maintaining reliability for business-critical
 - `Review` - Customer reviews with AI-suggested replies
 - `AdSummary` - Weekly campaign performance snapshots
 - `ChatMessage` - Conversation history with AI assistant
-- `BusinessProfileSetup` - Google Business Profile configuration
-- `AdsCampaignPlan` - Active campaign structure with keywords/bids
-- `OptimizationAction` - Audit log of AI-driven changes
+- **`BusinessProfileSetup`** - Google Business Profile configuration (status, description, categories, hours)
+- **`AdsCampaignPlan`** - Active campaign structure with keywords/bids JSON, geo targets, daily budget
+- **`OptimizationAction`** - Audit log of AI-driven changes (area: GBP/ADS, timestamp, action summary)
 
 ## API Endpoints
 
@@ -212,34 +213,55 @@ This ensures cost efficiency while maintaining reliability for business-critical
 - `POST /api/auth/login` - Authenticate and receive JWT
 
 ### Reviews
-- `GET /api/reviews` - List all reviews for logged-in user
+- `GET /api/reviews` - List all reviews for logged-in user (auto-generates AI replies for 4-5 star reviews)
 - `POST /api/reviews/:id/approve-reply` - Approve AI-suggested reply
 - `POST /api/reviews/:id/escalate` - Mark review for manual attention
 
 ### Ads
-- `GET /api/ads/summary` - Get latest campaign performance
+- `GET /api/ads/summary` - Get latest campaign performance (spend, leads, estimated revenue)
 
 ### Chat
 - `GET /api/chat/history` - Retrieve conversation history
 - `POST /api/chat/send` - Send message and receive AI response
 
-### Marketing (Planned)
-- `GET /api/marketing/overview` - Get active campaign status and recent optimizations
-- `POST /api/marketing/optimize` - Trigger AI optimization for GBP or Ads
+### Marketing (MVP)
+- **`GET /api/marketing/overview`** - Get active campaign status
+  - Returns: BusinessProfileSetup, most recent active AdsCampaignPlan, 5 recent OptimizationActions
+  - Powers the "Active Campaigns" card on Dashboard
+- **`POST /api/marketing/optimize`** - Trigger AI optimization for GBP or Ads
+  - Body: `{ "area": "GBP" | "ADS" }`
+  - If area === "GBP": Calls lowCostGenerate() for promotional post, logs OptimizationAction
+  - If area === "ADS": Calls criticalGenerate() for bid/keyword optimization, logs OptimizationAction
+  - Returns: `{ "suggestion": "...", "area": "..." }`
 
 All non-auth endpoints require JWT authorization via `Authorization: Bearer <token>` header.
+
+## Dashboard Features
+
+The Dashboard displays **4 key sections**:
+
+1. **This Week's Results** - Spend, leads, and estimated revenue from `/api/ads/summary`
+2. **Reputation Health** - Average star rating and count of new reviews awaiting response
+3. **Open Fires** - Count of escalated low-star reviews needing attention
+4. **Active Campaigns** - 
+   - GBP status (not_started / in_progress / live)
+   - Ads status (draft / active / paused)
+   - Recent optimization action log (e.g., "Paused keyword 'cheap furnace fix'...")
+   - **Two action buttons:**
+     - [Optimize Google Profile] - Calls `POST /api/marketing/optimize` with `{area:"GBP"}`
+     - [Optimize Ads Budget] - Calls `POST /api/marketing/optimize` with `{area:"ADS"}`
 
 ## Development Workflow
 
 1. **Make changes** to frontend or backend code
-2. **Watch for auto-reload** - Vite handles HMR for frontend, nodemon restarts backend
+2. **Watch for auto-reload** - Vite handles HMR for frontend, tsx restarts backend
 3. **Test features** in the browser at `http://localhost:5000`
 4. **Check logs** in the terminal for errors or debug output
 
 ## Future Enhancements
 
-- **Google API Integration** - Live data instead of stubs
-- **Advanced AI Models** - GPT-4 integration for sophisticated responses
+- **Google API Integration** - Live data instead of simulated optimization
+- **Advanced AI Models** - Enhanced context awareness for optimization suggestions
 - **Multi-user Support** - Agency accounts managing multiple businesses
 - **Performance Analytics** - Advanced reporting and forecasting
 - **Automated Actions** - AI can apply optimizations directly with approval workflows
@@ -261,6 +283,7 @@ All non-auth endpoints require JWT authorization via `Authorization: Bearer <tok
 - Verify PostgreSQL is running: `pg_isready`
 - Check `DATABASE_URL` format in `.env`
 - Ensure database user has create/read/write permissions
+- Run `npx prisma db push` to sync schema
 
 **Port Already in Use:**
 - Check if another process is using port 5000: `lsof -i :5000`
@@ -269,6 +292,7 @@ All non-auth endpoints require JWT authorization via `Authorization: Bearer <tok
 **Build Errors:**
 - Clear node_modules: `rm -rf node_modules && npm install`
 - Clear build cache: `rm -rf client/dist`
+- Regenerate Prisma client: `npx prisma generate`
 
 ## Contributing
 

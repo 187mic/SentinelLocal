@@ -1,0 +1,93 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  planTier  String   @default("free") // "free" | "growth" | "enterprise"
+  createdAt DateTime @default(now())
+
+  reviews               Review[]
+  adSummaries           AdSummary[]
+  chatMessages          ChatMessage[]
+  businessProfileSetup  BusinessProfileSetup?
+  adsCampaignPlans      AdsCampaignPlan[]
+  optimizationActions   OptimizationAction[]
+}
+
+model Review {
+  id               String   @id @default(cuid())
+  user             User     @relation(fields: [userId], references: [id])
+  userId           String
+  rating           Int
+  content          String
+  sourcePlatform   String   // "google" | "yelp"
+  status           String   @default("new") // "new" | "replied" | "escalated"
+  aiSuggestedReply String?
+  createdAt        DateTime @default(now())
+}
+
+model AdSummary {
+  id         String   @id @default(cuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  weekEnding DateTime
+  spend      Decimal  @db.Decimal(10, 2)
+  leads      Int
+  estRevenue Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  role      String   // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model BusinessProfileSetup {
+  id               String   @id @default(cuid())
+  user             User     @relation(fields: [userId], references: [id])
+  userId           String   @unique
+  status           String   @default("not_started") // "not_started" | "in_progress" | "live"
+  businessDesc     String?
+  categories       String?
+  servicesOffered  String?
+  serviceArea      String?
+  hoursJSON        Json?
+  lastUpdated      DateTime @default(now())
+}
+
+model AdsCampaignPlan {
+  id                String   @id @default(cuid())
+  user              User     @relation(fields: [userId], references: [id])
+  userId            String
+  campaignName      String
+  geoTargets        String?
+  keywordsJSON      Json     // [{keyword, matchType, bid}]
+  negativeKeywords  String?
+  dailyBudget       Decimal  @db.Decimal(10, 2)
+  bidStrategyNote   String?
+  status            String   @default("draft") // "draft" | "active" | "paused"
+  lastOptimizedAt   DateTime @default(now())
+}
+
+model OptimizationAction {
+  id            String   @id @default(cuid())
+  user          User     @relation(fields: [userId], references: [id])
+  userId        String
+  timestamp     DateTime @default(now())
+  area          String   // "GBP" | "ADS"
+  actionSummary String
+  impactNote    String?
+}
