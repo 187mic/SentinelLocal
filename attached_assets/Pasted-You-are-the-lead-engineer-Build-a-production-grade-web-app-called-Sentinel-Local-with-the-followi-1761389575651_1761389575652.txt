@@ -1,0 +1,264 @@
+You are the lead engineer. Build a production-grade web app called "Sentinel Local" with the following requirements:
+
+1. Tech stack:
+- Backend: Node.js with Fastify.
+- Frontend: React + Vite.
+- Database: Postgres + Prisma ORM.
+- Auth: Email/password login first (later we add OAuth). Use JWT-based session tokens.
+- We will deploy on a single container first.
+- Styling: TailwindCSS on the frontend.
+- State/query management on frontend: React Query OR a minimal custom fetch hook pattern.
+
+2. High-level concept:
+Sentinel Local is an AI marketing manager for local businesses. Each client gets:
+(a) Reputation module (Google reviews ingestion + AI reply drafting),
+(b) Ads module (Google Ads campaign summary and optimization suggestions),
+(c) Owner Chat module (natural language Q&A and action requests).
+
+We are NOT integrating real Google APIs yet. We will stub data and design clean interfaces so we can later plug in Google Ads API and Google Business Profile API.
+
+3. AI Model Strategy (CRITICAL REQUIREMENT):
+We will integrate AI generation through an internal service called llmClient. The purpose is:
+- Use free / low-cost OpenRouter models for low-risk text (e.g. polite review replies).
+- Use a cheap but reliable fallback model for high-stakes reasoning (ad spend summary, ROI explanation).
+- Handle rate limit / quota failures gracefully.
+
+Create file: /backend/services/llmClient.js
+Responsibilities:
+- Export two async funcs:
+async function lowCostGenerate(promptText) {}
+async function criticalGenerate(promptText) {}
+
+- ENV VARS to read:
+process.env.OPENROUTER_API_KEY
+process.env.OPENROUTER_BASE_URL (default "https://openrouter.ai/api/v1")
+process.env.LOWCOST_MODEL_PRIMARY (example default: "deepseek/deepseek-r1:free")
+process.env.LOWCOST_MODEL_BACKUP (example default: "meta-llama/llama-3.1-8b-instruct:free")
+process.env.CRITICAL_MODEL (example default: "deepseek/deepseek-r1:200k")
+NOTE: these are placeholders; do not hardcode secrets.
+
+- lowCostGenerate(promptText):
+1. Try POST to OPENROUTER_BASE_URL/chat/completions with LOWCOST_MODEL_PRIMARY.
+2. If HTTP 402 or 429 or non-2xx, retry once with LOWCOST_MODEL_BACKUP.
+3. If still fails, return a safe fallback string like:
+"System was busy. Please retry generating this draft."
+4. Return only the assistant text, not the entire JSON.
+
+This path is used for:
+- Drafting polite responses to 4★ and 5★ reviews.
+- Summaries of recent performance in a friendly tone.
+- Writing cheerful Google Post / promo copy.
+
+- criticalGenerate(promptText):
+1. Single attempt using CRITICAL_MODEL.
+2. If it fails, return a deterministic, local fallback string:
+"Here is the current status based on stored metrics..." and then build a message from DB numbers instead of model output.
+(For now, just return a stub like:
+"We spent $417 this week, generated 12 leads, and estimated $2,050 revenue. Conversion cost looks acceptable. We recommend continuing current budget."
+We'll replace this with real DB values later.)
+3. This path is used for:
+- Answering owner questions like “Why are my calls slow?”
+- Recommending bid changes / spend adjustments
+- Anything money / ROI critical
+
+- NOTE:
+For now, do NOT actually call external APIs. Stub HTTP requests in comments.
+Implement lowCostGenerate() and criticalGenerate() with placeholder logic that returns canned strings so the app runs locally without external keys. But structure the code clearly so we can later drop in fetch() calls to OpenRouter.
+
+4. Data model (Prisma schema draft):
+Create /prisma/schema.prisma with models:
+
+model User {
+id String @id @default(cuid())
+businessName String
+email String @unique
+hashedPassword String
+phone String?
+serviceAreaZipCodes String? // comma-separated list for now
+planTier String // "starter" | "growth" | "dominance"
+reviews Review[]
+adSummaries AdSummary[]
+chatMessages ChatMessage[]
+}
+
+model Review {
+id String @id @default(cuid())
+user User @relation(fields: [userId], references: [id])
+userId String
+rating Int
+content String
+sourcePlatform String // "google", "yelp", etc.
+status String // "new" | "replied" | "escalated"
+aiSuggestedReply String?
+ownerApprovedReply String?
+createdAt DateTime @default(now())
+}
+
+model AdSummary {
+id String @id @default(cuid())
+user User @relation(fields: [userId], references: [id])
+userId String
+periodStart DateTime
+periodEnd DateTime
+spend Decimal @db.Decimal(10,2)
+leads Int
+estRevenue Decimal @db.Decimal(10,2)
+topKeywords Json
+recommendations String
+}
+
+model ChatMessage {
+id String @id @default(cuid())
+user User @relation(fields: [userId], references: [id])
+userId String
+role String // "owner" | "assistant"
+message String
+createdAt DateTime @default(now())
+}
+
+Also create /scripts/seed.js:
+- Connect Prisma.
+- Insert 1 demo User.
+- Insert 3 demo Reviews for that user:
+* rating 5 (happy), suggested reply praising them.
+* rating 4 (polite minor feedback).
+* rating 2 (angry) with status="escalated".
+- Insert 1 AdSummary for last 7 days with spend, leads, estRevenue, recommendations.
+- Insert a short ChatMessage history (owner asking "Why are calls slow this week?" and assistant answering with a money-focused style).
+- Seed script runnable via `npm run seed`.
+
+5. Backend structure:
+Create /backend with:
+- /backend/server.js (Fastify init)
+- /backend/plugins/auth.js (JWT verification plugin)
+- /backend/routes/auth.js
+- /backend/routes/reviews.js
+- /backend/routes/ads.js
+- /backend/routes/chat.js
+- /backend/services/llmClient.js (described above)
+
+Auth routes:
+POST /api/auth/register
+POST /api/auth/login
+Return JWT on login. Hash passwords with bcrypt.
+
+Protect all non-auth routes with JWT middleware from /backend/plugins/auth.js.
+
+Reviews routes:
+GET /api/reviews
+- Return all reviews for the logged-in user, including aiSuggestedReply.
+POST /api/reviews/:id/approve-reply
+- Copy aiSuggestedReply → ownerApprovedReply.
+- Set status="replied".
+POST /api/reviews/:id/escalate
+- Set status="escalated".
+
+NOTE: When returning reviews with rating >=4 and status="new":
+If aiSuggestedReply is empty, call lowCostGenerate() to synthesize a friendly reply draft and include it in response.
+(For now, just call lowCostGenerate() which returns a stub string.)
+
+Ads routes:
+GET /api/ads/summary
+- Return the most recent AdSummary for the logged-in user.
+
+Chat routes:
+GET /api/chat/history
+- Return ChatMessage history for that user sorted ascending by createdAt.
+
+POST /api/chat/send
+- Body: { question: string }
+- Insert owner message.
+- Generate assistant reply:
+Call criticalGenerate(question).
+Save assistant reply as a ChatMessage with role="assistant".
+- Return the assistant reply.
+
+6. Frontend structure:
+Create /frontend with Vite + React + TailwindCSS.
+Pages / components:
+- /frontend/src/pages/Login.jsx
+* Email/password form.
+* On submit → /api/auth/login, save JWT in memory (and localStorage for now).
+- /frontend/src/pages/Register.jsx
+* Basic registration to create a User.
+- /frontend/src/pages/Dashboard.jsx
+* After login.
+* Show three summary cards:
+Card 1: "This Week's Results"
+- spend, leads, estRevenue from /api/ads/summary
+Card 2: "Reputation Health"
+- avg rating of last ~30 reviews (compute client-side)
+- how many reviews status="new"
+Card 3: "Open Fires"
+- count of reviews with status="escalated" or rating <=2
+- /frontend/src/pages/Reviews.jsx
+* Table: rating, snippet of content, aiSuggestedReply textarea (readonly for now), Approve button, Escalate button.
+* Approve button calls POST /api/reviews/:id/approve-reply.
+* Escalate button calls POST /api/reviews/:id/escalate.
+- /frontend/src/pages/Chat.jsx
+* Scrollable chat bubble view using /api/chat/history.
+* Input at bottom: text box "Ask the Marketing Manager..."
+* On send:
+POST /api/chat/send {question}
+Append assistant reply to chat window.
+
+UI guidelines:
+- Clean, modern, minimal.
+- White / gray background, rounded cards, subtle shadow.
+- Use Tailwind defaults. No custom design system yet.
+
+7. Config and environment:
+Create /config directory with:
+- /config/env.js that loads:
+DATABASE_URL
+JWT_SECRET
+OPENROUTER_API_KEY
+OPENROUTER_BASE_URL
+LOWCOST_MODEL_PRIMARY
+LOWCOST_MODEL_BACKUP
+CRITICAL_MODEL
+Export these values to the rest of backend.
+
+NOTE: For now the app should run even if OPENROUTER_* vars are missing — llmClient should fall back to canned strings.
+
+8. Security / auth details:
+- Use bcrypt to hash passwords when registering.
+- On login, sign a JWT { userId } using JWT_SECRET.
+- Frontend stores JWT in localStorage and includes Authorization: Bearer <token> on all subsequent fetches.
+- The Fastify JWT plugin in /backend/plugins/auth.js should verify and attach req.user.userId for downstream handlers.
+
+9. Dev workflow:
+- Root-level package.json should include scripts:
+"backend": "node backend/server.js"
+"frontend": "cd frontend && vite dev"
+"dev": "concurrently \"npm run backend\" \"npm run frontend\""
+"seed": "node scripts/seed.js"
+"prisma:migrate": "prisma migrate dev"
+- Include concurrently as a dependency so `npm run dev` launches both.
+
+10. README.md:
+Create a root-level README.md that explains:
+- Prereqs: Node.js, Postgres running locally.
+- 1) `npm install`
+- 2) Set .env with DATABASE_URL and JWT_SECRET at minimum.
+- 3) `npm run prisma:migrate`
+- 4) `npm run seed`
+- 5) `npm run dev`
+- Login with the seeded demo user.
+
+11. Deliverables summary:
+- Full folder structure:
+/backend
+/frontend
+/prisma
+/scripts
+/config
+README.md
+package.json
+- Prisma schema + initial migration + seed script.
+- Fastify server with routes for auth, reviews, ads, chat.
+- llmClient.js service implementing lowCostGenerate() and criticalGenerate() with stubbed logic and retry pattern for lowCostGenerate().
+- React frontend for Login, Register, Dashboard, Reviews, Chat.
+- Tailwind styling with simple, modern cards.
+
+After generating code, summarize any assumptions you made.

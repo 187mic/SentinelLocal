@@ -1,0 +1,138 @@
+Update the plan. We are not just summarizing performance. We are an AI that CREATES and MAINTAINS the client’s Google Business Profile (GBP / GMB) and Google Ads campaigns, and keeps optimizing them.
+
+You must extend the data model, backend routes, seed script, and UI to include the following. Treat this as part of MVP, not future work.
+
+1. NEW PRISMA MODELS
+Add these models to schema.prisma:
+
+model BusinessProfileSetup {
+id String @id @default(cuid())
+user User @relation(fields: [userId], references: [id])
+userId String
+
+status String // "not_started" | "in_progress" | "live"
+businessDesc String? // proposed Google Business Profile description text
+categories String? // comma-separated proposed categories
+servicesOffered String? // comma-separated service keywords
+serviceArea String? // comma-separated zips / cities
+hoursJSON Json? // proposed hours structure
+lastUpdated DateTime @default(now())
+}
+
+model AdsCampaignPlan {
+id String @id @default(cuid())
+user User @relation(fields: [userId], references: [id])
+userId String
+
+campaignName String
+geoTargets String? // comma-separated zips / cities
+keywordsJSON Json // [{keyword, matchType, bid}]
+negativeKeywords String? // comma-separated negatives
+dailyBudget Decimal @db.Decimal(10,2)
+bidStrategyNote String? // plain-English explanation for the owner
+status String // "draft" | "active" | "paused"
+lastOptimizedAt DateTime @default(now())
+}
+
+model OptimizationAction {
+id String @id @default(cuid())
+user User @relation(fields: [userId], references: [id])
+userId String
+
+timestamp DateTime @default(now())
+area String // "GBP" | "ADS"
+actionSummary String // "Raised bid on '24hr AC repair bellevue' to $2.60"
+impactNote String? // "Expected +15% call volume after 6pm"
+}
+
+Now update the User model to include these relations:
+
+model User {
+id String @id @default(cuid())
+businessName String
+email String @unique
+hashedPassword String
+phone String?
+serviceAreaZipCodes String? // comma-separated list for now
+planTier String // "starter" | "growth" | "dominance"
+
+reviews Review[]
+adSummaries AdSummary[]
+chatMessages ChatMessage[]
+
+
+businessProfileSetup BusinessProfileSetup?
+adsCampaignPlans AdsCampaignPlan[]
+optimizationActions OptimizationAction[]
+}
+
+2. SEED SCRIPT UPDATE
+In /scripts/seed.js you must now:
+- Create a BusinessProfileSetup row for the demo user:
+status="live"
+businessDesc="We are a 24/7 emergency HVAC and furnace repair company serving Tacoma and Bellevue."
+categories="HVAC contractor, Emergency AC repair"
+servicesOffered="24hr furnace repair, emergency AC repair, seasonal tune-up"
+serviceArea="Tacoma, Bellevue, Seattle"
+hoursJSON with Mon-Sun hours
+- Create one AdsCampaignPlan for that user:
+campaignName="24/7 Emergency HVAC Leads"
+geoTargets="Tacoma,Bellevue"
+keywordsJSON with high-intent service keywords and sample bids
+negativeKeywords="free, salary, DIY"
+dailyBudget=50.00
+bidStrategyNote="Focus bids on emergency / after-hours calls where close rate is highest."
+status="active"
+- Create two OptimizationAction rows for that user:
+1) area="ADS", actionSummary="Paused keyword 'cheap furnace fix' after $47 spend and 0 calls", impactNote="Cut waste, redirect budget to '24hr AC repair bellevue'."
+2) area="GBP", actionSummary="Posted Fall Tune-Up 20% Off promo to Google Business Profile", impactNote="Drives seasonal maintenance bookings."
+
+3. NEW MARKETING ROUTES
+Create /backend/routes/marketing.js with two routes:
+
+GET /api/marketing/overview (JWT-protected)
+- Return:
+- the user's BusinessProfileSetup
+- the most recent active AdsCampaignPlan
+- the 5 most recent OptimizationAction rows (ordered by timestamp desc)
+This powers the 'Active Campaigns' section of the dashboard.
+
+POST /api/marketing/optimize (JWT-protected)
+Body: { "area": "GBP" | "ADS" }
+Behavior:
+- If area="GBP":
+Call lowCostGenerate(prompt) from llmClient asking for a new Google Business Profile promo post (limited-time seasonal offer, friendly tone).
+Create a new OptimizationAction row with area="GBP" and actionSummary summarizing the suggestion.
+Return the suggestion text.
+- If area="ADS":
+Call criticalGenerate(prompt) from llmClient asking for what bid change or negative keyword to apply next based on spend/leads.
+Create a new OptimizationAction row with area="ADS" and actionSummary summarizing the suggestion.
+Return the suggestion text.
+
+For now, DO NOT actually call external APIs. The llmClient functions can return stub strings like:
+- "Proposed GBP Post: 'Fall Furnace Tune-Up — 20% Off This Week Only. Call Now, We’re Local.'"
+- "Ads Optimization: Pause 'cheap furnace fix', raise bid on '24hr AC repair bellevue' by $0.50 after 6pm."
+
+4. DASHBOARD UI UPDATE
+Update /frontend/src/pages/Dashboard.jsx:
+In addition to the three existing cards:
+- "This Week's Results"
+- "Reputation Health"
+- "Open Fires"
+You MUST also render an "Active Campaigns" section that calls GET /api/marketing/overview.
+
+Display:
+- GBP status: not_started / in_progress / live
+- Ads status: draft / active / paused (from AdsCampaignPlan.status)
+- Last 2-3 OptimizationAction.actionSummary lines, newest first (e.g. "Paused keyword 'cheap furnace fix'...")
+
+Also add two small buttons:
+- "Optimize Google Profile"
+- "Optimize Ads Budget"
+When clicked, POST /api/marketing/optimize with {area:"GBP"} or {area:"ADS"} and show the returned suggestion text right below the button.
+
+5. POSITIONING REQUIREMENT
+In README.md, clearly state in the project description:
+"Sentinel Local is NOT just analytics. It is an AI marketing operator. It creates and maintains a client's Google Business Profile and Google Ads campaign, continuously tunes keywords, bids, and promos, and logs every optimization action so the business owner sees what was done for them."
+
+Repeat all of the above back to me in your own words, then update your generation plan and file scaffolding so that these new models, routes (/api/marketing), seed data, and the 'Active Campaigns' dashboard section are included in the initial code output.

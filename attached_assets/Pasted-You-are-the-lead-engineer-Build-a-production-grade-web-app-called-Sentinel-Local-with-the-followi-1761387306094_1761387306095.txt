@@ -1,0 +1,84 @@
+You are the lead engineer. Build a production-grade web app called "Sentinel Local" with the following requirements:
+
+1. Tech stack:
+- Backend: Node.js with Fastify.
+- Frontend: React + Vite.
+- Database: Postgres + Prisma ORM.
+- Auth: Email/password login first (later we add OAuth). Use JWT-based session tokens.
+- We will deploy on a single container first.
+
+2. High-level concept:
+This app is an AI marketing manager for local businesses. Each client gets:
+(a) Reputation module (Google reviews ingestion + AI reply drafting),
+(b) Ads module (Google Ads campaign summary and optimization suggestions),
+(c) Owner Chat module (natural language Q&A and action requests).
+
+We are NOT implementing real Google APIs yet. We will stub data and design the data model and endpoints cleanly so we can later plug in Google Ads API and Google Business Profile API.
+
+3. Data model (Prisma schema draft):
+- User: id, businessName, email, hashedPassword, phone, serviceAreaZipCodes (array/string), planTier ("starter" | "growth" | "dominance").
+- Review: id, userId(FK), rating(int), content(text), sourcePlatform(string, e.g. "google"), status("new" | "replied" | "escalated"), aiSuggestedReply(text), ownerApprovedReply(text), createdAt.
+- AdSummary: id, userId(FK), periodStart, periodEnd, spend(decimal), leads(int), estRevenue(decimal), topKeywords(json), recommendations(text).
+- ChatMessage: id, userId(FK), role("owner"|"assistant"), message(text), createdAt.
+
+Create the initial Prisma schema with these models and migration scripts.
+
+4. Backend routes (Fastify):
+Auth:
+POST /api/auth/register
+POST /api/auth/login
+Reviews:
+GET /api/reviews (list reviews for logged-in user)
+POST /api/reviews/:id/approve-reply (owner approves AI reply, mark status="replied")
+POST /api/reviews/:id/escalate (mark status="escalated")
+Ads:
+GET /api/ads/summary (return latest AdSummary for logged-in user)
+Chat:
+GET /api/chat/history
+POST /api/chat/send (owner sends a question like "Why are calls slow this week?")
+- respond with a stubbed assistant answer that references spend, leads, conversion cost, etc. Use a simple rule-based generator for now.
+
+Add JWT middleware to protect all routes except register/login.
+
+5. Frontend pages (React + Vite + TailwindCSS):
+- Login / Register page.
+- Dashboard page with 3 cards across the top:
+Card 1: "This Week's Results" -> show spend, leads, estRevenue from AdsSummary.
+Card 2: "Reputation Health" -> average rating last 30 reviews, #new reviews awaiting response.
+Card 3: "Open Fires" -> any escalated 1-3 star reviews that need owner attention.
+- Reviews page:
+Table of reviews: rating, snippet of content, aiSuggestedReply textarea, Approve button, Escalate button.
+- Chat page:
+Left side: scrollable chat history bubbles.
+Bottom: input box "Ask the Marketing Manager..."
+When user sends, call /api/chat/send and render assistant reply.
+
+Use a clean, modern, minimal UI with generous whitespace, rounded corners, and subtle shadow. Use Tailwind defaults.
+
+6. Quality expectations:
+- Create a /config directory for environment variables (JWT secret, DB URL).
+- Create a /prisma directory with schema.prisma and seed script that inserts:
+• 1 demo user
+• 3 demo reviews (positive, neutral, negative) with aiSuggestedReply filled in
+• 1 AdSummary with spend, leads, estRevenue, recommendations
+• a short ChatMessage history
+- Seed script should run with `npm run seed`.
+- Add README.md with instructions:
+• how to install dependencies
+• how to run Prisma migrate dev + seed
+• how to run backend (Fastify)
+• how to run frontend (Vite dev server)
+
+7. NON-NEGOTIABLE:
+- Code MUST be organized into folders: /backend, /frontend, /prisma, /config, /scripts.
+- Backend uses Fastify plugins/routes pattern for cleanliness.
+- Frontend uses React Query (or a lightweight fetch wrapper) to call API.
+- Everything must run locally with `npm install` and `npm run dev` (can be a root-level concurrently script that runs both frontend and backend).
+
+Deliverables:
+1. Project folder structure + boilerplate code.
+2. Prisma schema + seed script.
+3. Fastify server with routes above, JWT auth, and stub logic for AI answers in /api/chat/send.
+4. React frontend pages (Dashboard, Reviews, Chat, Login/Register) styled with Tailwind.
+
+After generating code, summarize any assumptions you made.
