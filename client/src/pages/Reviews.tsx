@@ -45,12 +45,12 @@ export default function Reviews() {
 
   const handleApprove = (id: string) => {
     console.log('Approved review:', id);
-    setReviews(reviews.map(r => r.id === id ? { ...r, status: 'replied' as const } : r));
+    setReviews(reviews.map(r => r.id === id ? { ...r, status: 'replied' as const } : r) as typeof reviews);
   };
 
   const handleEscalate = (id: string) => {
     console.log('Escalated review:', id);
-    setReviews(reviews.map(r => r.id === id ? { ...r, status: 'escalated' as const } : r));
+    setReviews(reviews.map(r => r.id === id ? { ...r, status: 'escalated' as const } : r) as typeof reviews);
   };
 
   const filterReviews = (status?: string) => {

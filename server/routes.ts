@@ -5,7 +5,16 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 const prisma = new PrismaClient();
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+
+// Validate JWT secret is set in production
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET environment variable must be set in production');
+  }
+  console.warn('⚠️  WARNING: Using default JWT_SECRET in development. Set JWT_SECRET in .env for production!');
+}
+const JWT_SECRET_VALUE = JWT_SECRET || 'dev-secret-change-in-production';
 
 // OpenRouter config
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
@@ -81,13 +90,82 @@ function authenticateToken(req: any, res: any, next: any) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+  jwt.verify(token, JWT_SECRET_VALUE, (err: any, user: any) => {
     if (err) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     req.user = user;
     next();
   });
+}
+
+// Input validation helpers
+function isValidEmail(email: string): boolean {
+  // ReDoS-safe email validation using string operations instead of complex regex
+  if (email.length > 255 || email.length < 3) {
+    return false;
+  }
+  
+  // Must have exactly one @ and at least one . after it
+  const atIndex = email.indexOf('@');
+  if (atIndex === -1 || atIndex === 0 || atIndex !== email.lastIndexOf('@')) {
+    return false;
+  }
+  
+  const localPart = email.substring(0, atIndex);
+  const domain = email.substring(atIndex + 1);
+  
+  // Domain must contain at least one dot
+  const dotIndex = domain.indexOf('.');
+  if (dotIndex === -1 || dotIndex === 0 || dotIndex === domain.length - 1) {
+    return false;
+  }
+  
+  // Simple character validation using safe regex (no quantifiers or groups that cause backtracking)
+  // Only allow alphanumeric, dots, hyphens, and common email special chars
+  const safeEmailRegex = /^[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9.-]+$/;
+  if (!safeEmailRegex.test(email)) {
+    return false;
+  }
+  
+  // Additional safety checks
+  if (localPart.length > 64 || domain.length > 253) {
+    return false;
+  }
+  
+  // Domain parts should not start or end with hyphen
+  const domainParts = domain.split('.');
+  for (const part of domainParts) {
+    if (part.length === 0 || part.startsWith('-') || part.endsWith('-')) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+function isStrongPassword(password: string): { valid: boolean; error?: string } {
+  if (password.length < 8) {
+    return { valid: false, error: 'Password must be at least 8 characters long' };
+  }
+  if (password.length > 128) {
+    return { valid: false, error: 'Password must not exceed 128 characters' };
+  }
+  if (!/[a-z]/.test(password)) {
+    return { valid: false, error: 'Password must contain at least one lowercase letter' };
+  }
+  if (!/[A-Z]/.test(password)) {
+    return { valid: false, error: 'Password must contain at least one uppercase letter' };
+  }
+  if (!/[0-9]/.test(password)) {
+    return { valid: false, error: 'Password must contain at least one number' };
+  }
+  return { valid: true };
+}
+
+function sanitizeString(str: string, maxLength: number = 1000): string {
+  // Remove any null bytes and trim whitespace
+  return str.replace(/\0/g, '').trim().slice(0, maxLength);
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -100,20 +178,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: 'Email and password required' });
       }
 
-      const existing = await prisma.user.findUnique({ where: { email } });
+      // Validate email format
+      if (!isValidEmail(email)) {
+        return res.status(400).json({ error: 'Invalid email format' });
+      }
+
+      // Validate password strength
+      const passwordCheck = isStrongPassword(password);
+      if (!passwordCheck.valid) {
+        return res.status(400).json({ error: passwordCheck.error });
+      }
+
+      const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
       if (existing) {
         return res.status(400).json({ error: 'User already exists' });
       }
 
-      const hashedPassword = await bcrypt.hash(password, 10);
+      const hashedPassword = await bcrypt.hash(password, 12); // Increased cost factor for better security
       const user = await prisma.user.create({
-        data: { email, password: hashedPassword, planTier: 'free' }
+        data: { email: email.toLowerCase(), password: hashedPassword, planTier: 'free' }
       });
 
-      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET);
+      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET_VALUE, { expiresIn: '7d' });
       res.json({ token, user: { id: user.id, email: user.email, planTier: user.planTier } });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Registration error:', error);
+      res.status(500).json({ error: 'Registration failed. Please try again.' });
     }
   });
 
@@ -125,7 +215,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: 'Email and password required' });
       }
 
-      const user = await prisma.user.findUnique({ where: { email } });
+      // Validate email format
+      if (!isValidEmail(email)) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
       if (!user) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
@@ -135,10 +230,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET);
+      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET_VALUE, { expiresIn: '7d' });
       res.json({ token, user: { id: user.id, email: user.email, planTier: user.planTier } });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Login error:', error);
+      res.status(500).json({ error: 'Login failed. Please try again.' });
     }
   });
 
@@ -170,7 +266,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(reviews);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Error fetching reviews:', error);
+      res.status(500).json({ error: 'Failed to fetch reviews. Please try again.' });
     }
   });
 
@@ -191,7 +288,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Error approving reply:', error);
+      res.status(500).json({ error: 'Failed to approve reply. Please try again.' });
     }
   });
 
@@ -212,7 +310,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Error escalating review:', error);
+      res.status(500).json({ error: 'Failed to escalate review. Please try again.' });
     }
   });
 
@@ -236,7 +335,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         estRevenue: parseFloat(summary.estRevenue.toString())
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Error fetching ad summary:', error);
+      res.status(500).json({ error: 'Failed to fetch ad summary. Please try again.' });
     }
   });
 
@@ -253,7 +353,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(messages);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Error fetching chat history:', error);
+      res.status(500).json({ error: 'Failed to fetch chat history. Please try again.' });
     }
   });
 
@@ -262,15 +363,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.userId;
       const { message } = req.body;
 
-      if (!message) {
+      if (!message || typeof message !== 'string') {
         return res.status(400).json({ error: 'Message required' });
       }
 
+      // Sanitize and validate message length
+      const sanitizedMessage = sanitizeString(message, 2000);
+      if (sanitizedMessage.length === 0) {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+      }
+
       await prisma.chatMessage.create({
-        data: { userId, role: 'user', content: message }
+        data: { userId, role: 'user', content: sanitizedMessage }
       });
 
-      const prompt = `You are Sentinel, an AI marketing assistant for a local business. The business owner asks: "${message}". Provide a helpful, concise response (2-3 sentences) about their marketing, ads, or business performance.`;
+      const prompt = `You are Sentinel, an AI marketing assistant for a local business. The business owner asks: "${sanitizedMessage}". Provide a helpful, concise response (2-3 sentences) about their marketing, ads, or business performance.`;
       const aiResponse = await criticalGenerate(prompt);
 
       const assistantMessage = await prisma.chatMessage.create({
@@ -279,7 +386,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(assistantMessage);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Chat error:', error);
+      res.status(500).json({ error: 'Failed to process message. Please try again.' });
     }
   });
 
@@ -309,7 +417,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recentOptimizations
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Error fetching marketing overview:', error);
+      res.status(500).json({ error: 'Failed to fetch marketing overview. Please try again.' });
     }
   });
 
@@ -330,7 +439,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           where: { userId }
         });
 
-        const prompt = `Create a promotional Google Business Profile post (2-3 sentences) for a business with this description: "${businessProfile?.businessDesc || 'local service business'}". Make it engaging and include a call-to-action.`;
+        const businessDesc = businessProfile?.businessDesc || 'local service business';
+        const sanitizedDesc = sanitizeString(businessDesc, 500);
+        const prompt = `Create a promotional Google Business Profile post (2-3 sentences) for a business with this description: "${sanitizedDesc}". Make it engaging and include a call-to-action.`;
         suggestion = await lowCostGenerate(prompt);
         actionSummary = `Generated new GBP promotional post: "${suggestion.substring(0, 100)}..."`;
       } else {
@@ -340,7 +451,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         const keywords = adsCampaign?.keywordsJSON ? JSON.stringify(adsCampaign.keywordsJSON) : 'emergency HVAC services';
-        const prompt = `Suggest one specific Google Ads optimization (bid adjustment, keyword change, or budget reallocation) for a campaign targeting: ${keywords}. Be specific with numbers.`;
+        const sanitizedKeywords = sanitizeString(keywords, 500);
+        const prompt = `Suggest one specific Google Ads optimization (bid adjustment, keyword change, or budget reallocation) for a campaign targeting: ${sanitizedKeywords}. Be specific with numbers.`;
         suggestion = await criticalGenerate(prompt);
         actionSummary = `Ads optimization suggested: ${suggestion.substring(0, 100)}...`;
       }
@@ -356,7 +468,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ suggestion, area });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('Error optimizing marketing:', error);
+      res.status(500).json({ error: 'Failed to generate optimization. Please try again.' });
     }
   });
 
